@@ -22,6 +22,10 @@ struct Particle {
   std::vector<int> associations;
   std::vector<double> sense_x;
   std::vector<double> sense_y;
+  Particle(){}
+  
+  Particle(int id, double x, double y, double theta)
+  : id(id), x(x), y(y), theta(theta), weight(1){}
 };
 
 

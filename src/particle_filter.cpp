@@ -15,6 +15,8 @@
 #include <random>
 #include <string>
 #include <vector>
+#include "Eigen/Dense"
+
 
 #include "helper_functions.h"
 
@@ -30,8 +32,20 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 0;  // TODO: Set the number of particles
+  num_particles = 100;  // TODO: Set the number of particles
+  std::default_random_engine gen;
 
+
+  // This line creates a normal (Gaussian) distribution for x
+  std::normal_distribution<double> dist_x(x, std[0]);
+  std::normal_distribution<double> dist_y(y, std[1]);
+  std::normal_distribution<double> dist_theta(theta, std[2]);
+
+  for (int i=0; i<num_particles; ++i){
+    Particle p(i, dist_x(gen), dist_y(gen), dist_theta(gen));
+    particles.push_back(p);
+  }
+  is_initialized  = true;
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], 
@@ -43,6 +57,28 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
    *  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
    *  http://www.cplusplus.com/reference/random/default_random_engine/
    */
+
+  double noise_std_x = 0.1;
+  double noise_std_y = 0.1;
+  double noise_std_theta = 0.01;
+
+  std::default_random_engine gen;
+  std::normal_distribution<double> dist_x(0, noise_std_x);
+  std::normal_distribution<double> dist_y(0, noise_std_y);
+  std::normal_distribution<double> dist_theta(0, noise_std_theta);
+
+  for(int i=0;i<num_particles;++i){
+    Particle& p = particles[i];
+
+    double theta_f = p.theta + yaw_rate * delta_t;
+    double x_f = p.x + (velocity/yaw_rate) * ( sin(theta_f) - sin(p.theta));
+    double y_f = p.y + (velocity/yaw_rate) * ( cos(p.theta) - cos(theta_f));
+
+    p.x = x_f + dist_x(gen);
+    p.y = y_f + dist_y(gen);
+    p.theta = theta_f + dist_theta(gen);
+
+  }
 
 }
 
@@ -75,6 +111,21 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
    *   and the following is a good resource for the actual equation to implement
    *   (look at equation 3.33) http://planning.cs.uiuc.edu/node99.html
    */
+  double theta = -M_PI/2.0;
+  double offset_x = 0;
+  double offset_y = 0;
+
+  Eigen::Matrix3d M;
+  M<<cos(theta), -sin(theta), offset_x, 
+     sin(theta), cos(theta), offset_y, 
+     0.0, 0.0, 1.0;
+
+
+  for(const LandmarkObs& ob : observations){
+    Eigen::Vector3d ob_car;
+    ob_car << ob.x, ob.y, 1.0;
+    Eigen::Vector3d ob_map = M * ob_car;
+  }
 
 }
 
