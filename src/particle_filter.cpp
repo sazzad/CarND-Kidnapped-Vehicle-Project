@@ -32,7 +32,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 100;  // TODO: Set the number of particles
+  num_particles = 500;  // TODO: Set the number of particles
   std::default_random_engine gen;
 
 
@@ -58,14 +58,10 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
    *  http://www.cplusplus.com/reference/random/default_random_engine/
    */
 
-  double noise_std_x = 0.1;
-  double noise_std_y = 0.1;
-  double noise_std_theta = 0.01;
-
   std::default_random_engine gen;
-  std::normal_distribution<double> dist_x(0, noise_std_x);
-  std::normal_distribution<double> dist_y(0, noise_std_y);
-  std::normal_distribution<double> dist_theta(0, noise_std_theta);
+  std::normal_distribution<double> dist_x(0, std_pos[0]);
+  std::normal_distribution<double> dist_y(0, std_pos[1]);
+  std::normal_distribution<double> dist_theta(0, std_pos[2]);
 
   for(int i=0;i<num_particles;++i){
     Particle& p = particles[i];
@@ -77,6 +73,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
     p.x = x_f + dist_x(gen);
     p.y = y_f + dist_y(gen);
     p.theta = theta_f + dist_theta(gen);
+    //std::cout<<"p.x: "<< p.x << " p.y: "<< p.y<< " theta: "<< p.theta<<" weight: "<< p.weight<<std::endl;
 
   }
 
@@ -92,6 +89,26 @@ void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
    *   probably find it useful to implement this method and use it as a helper 
    *   during the updateWeights phase.
    */
+
+}
+
+Eigen::Vector2d FindNN(const Map& map_landmarks, Eigen::Vector2d& ob, int* id){
+
+  double min_dist = std::numeric_limits<double>::max();
+  Eigen::Vector2d nearest_landmark;
+
+  const auto& landmarks = map_landmarks.landmark_list;
+
+  for(int i=0;i<landmarks.size();++i){
+    Eigen::Vector2d v(landmarks[i].x_f, landmarks[i].y_f);
+    double dist  = (ob - v).norm();
+    if(dist < min_dist){
+      min_dist = dist;
+      nearest_landmark = v;
+      *id= landmarks[i].id_i;
+    }
+  }
+  return nearest_landmark;
 
 }
 
@@ -111,20 +128,70 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
    *   and the following is a good resource for the actual equation to implement
    *   (look at equation 3.33) http://planning.cs.uiuc.edu/node99.html
    */
-  double theta = -M_PI/2.0;
-  double offset_x = 0;
-  double offset_y = 0;
 
-  Eigen::Matrix3d M;
-  M<<cos(theta), -sin(theta), offset_x, 
-     sin(theta), cos(theta), offset_y, 
-     0.0, 0.0, 1.0;
+  // car frame to global frame: car frame : x forward, y left: map frame; y forward, x right.
+
+  std::function<double(double)> sq = [](double x){return x*x; };
+  Eigen::Matrix2d P;
+  P << sq(std_landmark[0]), 0,
+        0, sq(std_landmark[1]);
+
+  std::function<double(const Eigen::Vector2d&)> Gaussian = [&](const Eigen::Vector2d& x){
+    return (1./(2* M_PI * std_landmark[0]*std_landmark[1])) * exp(-0.5 * x.transpose() * P.inverse() * x);
+  };
+
+  weights.clear();
+
+  double total_w = 0;
+  for(int i=0;i<num_particles;++i){
+    Particle& p = particles[i];
+
+    // clear previous associations.
+    p.associations.clear();
+    p.sense_x.clear();
+    p.sense_y.clear();
+
+    for(const LandmarkObs& ob : observations){
+      // 1. check if the observation is below sensor range or not.
+      double range = sqrt(sq(ob.x) + sq(ob.y));
+      //std::cout<<"range: "<< range << std::endl;
+      if(range>sensor_range){
+        continue;
+      }
+
+      // 2. convert observation from car frame to map frame.
+      Eigen::Matrix3d M;
+      M<<cos(p.theta), -sin(p.theta), p.x, 
+        sin(p.theta), cos(p.theta), p.y, 
+        0.0, 0.0, 1.0;
+
+      Eigen::Vector3d C_p_observation;
+      C_p_observation << ob.x, ob.y, 1.0;
+      Eigen::Vector3d ob_map = M * C_p_observation;
+
+      Eigen::Vector2d G_p_observation(ob_map(0), ob_map(1));
+      int landmark_id=0;
+      Eigen::Vector2d G_p_landmark = FindNN(map_landmarks, G_p_observation, &landmark_id);
+
+      p.associations.push_back(landmark_id);
+      p.sense_x.push_back(G_p_observation(0));
+      p.sense_y.push_back(G_p_observation(1));
 
 
-  for(const LandmarkObs& ob : observations){
-    Eigen::Vector3d ob_car;
-    ob_car << ob.x, ob.y, 1.0;
-    Eigen::Vector3d ob_map = M * ob_car;
+      double posterior = Gaussian(G_p_observation - G_p_landmark);
+      //std::cout<<"Posterior: "<< posterior<< std::endl;
+      p.weight*=posterior;
+    }
+
+    total_w+=p.weight;
+
+  }
+  // normalize:
+  
+  for(int i=0;i<num_particles;++i){
+    Particle& p = particles[i];
+    p.weight/=total_w;
+    weights.push_back(p.weight);
   }
 
 }
@@ -136,6 +203,27 @@ void ParticleFilter::resample() {
    * NOTE: You may find std::discrete_distribution helpful here.
    *   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
    */
+
+  std::default_random_engine gen;
+  std::uniform_int_distribution<> dis(0, num_particles-1);
+
+  auto iter = std::max_element(weights.begin(), weights.end());
+  std::cout<<"max weight: "<< *iter<<"\n";
+
+  std::vector<Particle> resampled_particles;
+  int index = dis(gen);
+  double beta = 0;
+  for(int i=0;i<num_particles;++i){
+    std::uniform_real_distribution<> dis2(0,  2 * (*iter));
+    beta += dis2(gen);
+    while(beta > weights[index]){
+      beta -= weights[index];
+      index = (index+1)%num_particles;
+    }
+    resampled_particles.push_back(particles[index]);
+  }
+  particles.clear();
+  particles = resampled_particles;
 
 }
 
