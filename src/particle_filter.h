@@ -24,8 +24,8 @@ struct Particle {
   std::vector<double> sense_y;
   Particle(){}
 
-  Particle(int id, double x, double y, double theta)
-  : id(id), x(x), y(y), theta(theta), weight(1.0){}
+  Particle(int id_, double x_, double y_, double theta_)
+  : id(id_), x(x_), y(y_), theta(theta_), weight(1.0){}
 };
 
 
