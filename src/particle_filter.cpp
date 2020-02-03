@@ -32,7 +32,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 600;  // TODO: Set the number of particles
+  num_particles = 500;  // TODO: Set the number of particles
   std::default_random_engine gen;
 
 
@@ -63,25 +63,23 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
   std::normal_distribution<double> dist_y(0, std_pos[1]);
   std::normal_distribution<double> dist_theta(0, std_pos[2]);
 
-  for(int i=0;i<num_particles;++i){
-    Particle& p = particles[i];
-
-    double theta_f, x_f, y_f;
-
+  for(Particle& p : particles){
     if (fabs(yaw_rate) < 1e-6){
-      theta_f = p.theta;
-      x_f = p.x + velocity * cos(p.theta);
-      y_f = p.y + velocity * sin(p.theta);
+      const double v_dt = velocity * delta_t;
+      p.x += v_dt * cos(p.theta);
+      p.y += v_dt * sin(p.theta);
     }
     else{
-      theta_f = p.theta + yaw_rate * delta_t;
-      x_f = p.x + (velocity/yaw_rate) * ( sin(theta_f) - sin(p.theta));
-      y_f = p.y + (velocity/yaw_rate) * ( cos(p.theta) - cos(theta_f));
+      const double y_dt = yaw_rate * delta_t;
+      const double v_y = velocity/yaw_rate;
+      p.x += v_y * ( sin(p.theta + y_dt) - sin(p.theta));
+      p.y += v_y * ( cos(p.theta) - cos(p.theta + y_dt));
+      p.theta += y_dt;
     }
 
-    p.x = x_f + dist_x(gen);
-    p.y = y_f + dist_y(gen);
-    p.theta = theta_f + dist_theta(gen);
+    p.x += dist_x(gen);
+    p.y += dist_y(gen);
+    p.theta += dist_theta(gen);
   }
 
 }
@@ -99,19 +97,16 @@ void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
 
 }
 
-Eigen::Vector2d FindNN(const Map& map_landmarks, Eigen::Vector2d& ob, const Eigen::Vector2d& current_pos, double sensor_range, int* id){
+Eigen::Vector2d FindNN(Eigen::Vector2d& ob, 
+  const std::vector<Map::single_landmark_s>& landmarks,
+  int* id){
 
   double min_dist = std::numeric_limits<double>::max();
   Eigen::Vector2d nearest_landmark;
   *id = -1;
 
-  const auto& landmarks = map_landmarks.landmark_list;
-
   for(int i=0;i<landmarks.size();++i){
     Eigen::Vector2d v(landmarks[i].x_f, landmarks[i].y_f);
-    if( (current_pos - v).norm() > sensor_range){
-      continue;
-    }
     double dist  = (ob - v).norm();
     if(dist < min_dist){
       min_dist = dist;
@@ -119,8 +114,6 @@ Eigen::Vector2d FindNN(const Map& map_landmarks, Eigen::Vector2d& ob, const Eige
       *id= landmarks[i].id_i;
     }
   }
-  //if (min_dist > 1.0)
-  //  std::cout<<"min dist: "<< min_dist<<std::endl;
   assert(*id != -1);
   return nearest_landmark;
 
@@ -161,21 +154,19 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
   for(int i=0;i<num_particles;++i){
     Particle& p = particles[i];
 
-    // clear previous associations.
-    p.associations.clear();
-    p.sense_x.clear();
-    p.sense_y.clear();
+    std::vector<Map::single_landmark_s> landmarks_in_list;
+    const auto& landmarks = map_landmarks.landmark_list;
+    for(int i=0;i<landmarks.size();++i){
+      if( dist(landmarks[i].x_f, landmarks[i].y_f, p.x, p.y) <= sensor_range){
+        landmarks_in_list.push_back(landmarks[i]);
+      }
+    }
+
+
+
     p.weight = 1.0;
 
     for(const LandmarkObs& ob : observations){
-      // 1. check if the observation is below sensor range or not.
-      //double range = sqrt(sq(ob.x) + sq(ob.y));
-      //std::cout<<"range: "<< range << std::endl;
-      //if(range>sensor_range){
-      //  continue;
-      //}
-
-      // 2. convert observation from car frame to map frame.
       Eigen::Matrix3d M;
       M<<cos(p.theta), -sin(p.theta), p.x, 
         sin(p.theta), cos(p.theta), p.y, 
@@ -186,17 +177,15 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
       Eigen::Vector3d ob_map = M * C_p_observation;
 
       Eigen::Vector2d G_p_observation(ob_map(0), ob_map(1));
-      Eigen::Vector2d current_pos(p.x, p.y);
       int landmark_id=0;
-      Eigen::Vector2d G_p_landmark = FindNN(map_landmarks, G_p_observation, current_pos, sensor_range, &landmark_id);
+      Eigen::Vector2d G_p_landmark = FindNN(G_p_observation,landmarks_in_list, &landmark_id);
 
-      p.associations.push_back(landmark_id);
-      p.sense_x.push_back(G_p_observation(0));
-      p.sense_y.push_back(G_p_observation(1));
+      //p.associations.push_back(landmark_id);
+      //p.sense_x.push_back(G_p_observation(0));
+      //p.sense_y.push_back(G_p_observation(1));
 
 
       double posterior = Gaussian(G_p_observation - G_p_landmark);
-      //std::cout<<"Posterior: "<< posterior<< std::endl;
       p.weight*=posterior;
     }
     weights[i] = p.weight;
@@ -204,9 +193,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     total_w+=p.weight;
 
   }
-  if(total_w < 1e-6){
-    std::cout<<"total weight is too low!! " << observations.size()<<std::endl;
-  }
+
   // normalize:
   #if 0
   for(int i=0;i<num_particles;++i){
