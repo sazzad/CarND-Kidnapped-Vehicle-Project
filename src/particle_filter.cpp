@@ -154,18 +154,18 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
   for(int i=0;i<num_particles;++i){
     Particle& p = particles[i];
 
+    // select landmarks that are within the sensor range.
     std::vector<Map::single_landmark_s> landmarks_in_list;
     const auto& landmarks = map_landmarks.landmark_list;
-    for(int i=0;i<landmarks.size();++i){
-      if( dist(landmarks[i].x_f, landmarks[i].y_f, p.x, p.y) <= sensor_range){
-        landmarks_in_list.push_back(landmarks[i]);
+    for(const auto& landmark : landmarks ){
+      if( dist(landmark.x_f, landmark.y_f, p.x, p.y) <= sensor_range){
+        landmarks_in_list.push_back(landmark);
       }
     }
 
-
-
     p.weight = 1.0;
 
+    // convert each observation from car frame to global map frame.
     for(const LandmarkObs& ob : observations){
       Eigen::Matrix3d M;
       M<<cos(p.theta), -sin(p.theta), p.x, 
@@ -180,11 +180,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
       int landmark_id=0;
       Eigen::Vector2d G_p_landmark = FindNN(G_p_observation,landmarks_in_list, &landmark_id);
 
-      //p.associations.push_back(landmark_id);
-      //p.sense_x.push_back(G_p_observation(0));
-      //p.sense_y.push_back(G_p_observation(1));
-
-
       double posterior = Gaussian(G_p_observation - G_p_landmark);
       p.weight*=posterior;
     }
@@ -193,15 +188,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     total_w+=p.weight;
 
   }
-
-  // normalize:
-  #if 0
-  for(int i=0;i<num_particles;++i){
-    Particle& p = particles[i];
-    p.weight/=total_w;
-    weights.push_back(p.weight);
-  }
-  #endif
 
 }
 
